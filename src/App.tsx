@@ -70,10 +70,11 @@ function App() {
   // Check auth on mount
   useEffect(() => {
     addLog('useEffect iniciado');
+    let isMounted = true;
     
     // Timeout de seguridad - si después de 10 segundos sigue cargando, mostrar login
     const timeout = setTimeout(() => {
-      if (isLoading) {
+      if (isLoading && isMounted) {
         addLog('TIMEOUT: Forzando fin de carga');
         setIsLoading(false);
       }
@@ -81,16 +82,21 @@ function App() {
     
     checkAuth();
     
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      addLog(`Auth state change: ${event}`);
-      if (event === 'SIGNED_IN' && session?.user) {
-        await loadUserData(session.user.id);
-      } else if (event === 'SIGNED_OUT') {
+    // Solo escuchar SIGNED_OUT explícito, ignorar otros eventos
+    // porque checkAuth ya maneja la carga inicial
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, _session) => {
+      addLog(`Auth event: ${event}`);
+      
+      // Solo actuar en SIGNED_OUT real (no en TOKEN_REFRESHED u otros)
+      if (event === 'SIGNED_OUT' && isMounted) {
+        addLog('SIGNED_OUT detectado, reseteando...');
         resetState();
       }
+      // Ignorar otros eventos - checkAuth ya maneja la carga inicial
     });
 
     return () => {
+      isMounted = false;
       clearTimeout(timeout);
       subscription.unsubscribe();
     };
@@ -131,13 +137,28 @@ function App() {
     addLog(`loadUserData: ${userId.substring(0, 8)}...`);
     
     try {
+      // Obtener datos del auth primero (esto siempre funciona si hay sesión)
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      
+      if (!authUser) {
+        addLog('No hay usuario autenticado');
+        setIsLoading(false);
+        return;
+      }
+      
+      addLog(`Auth user: ${authUser.email}`);
+      
       // 1. Buscar perfil
       addLog('Buscando perfil...');
-      const { data: profile } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from('users')
         .select('*')
         .eq('id', userId)
         .maybeSingle();
+      
+      if (profileError) {
+        addLog(`Error buscando perfil: ${profileError.message}`);
+      }
       
       let userProfile = profile;
       let companyId = profile?.company_id;
@@ -151,86 +172,106 @@ function App() {
           .from('companies')
           .select('id, name, rfc')
           .limit(1)
-          .single();
+          .maybeSingle();
         
         companyId = existingCompany?.id;
         
         // Si no hay empresa, crear una
         if (!companyId) {
           addLog('Creando empresa...');
-          const { data: newCompany } = await supabase
+          const { data: newCompany, error: companyError } = await supabase
             .from('companies')
             .insert({ name: 'Logan & Mason', rfc: 'LAM111118JNA' })
             .select()
             .single();
+          
+          if (companyError) {
+            addLog(`Error creando empresa: ${companyError.message}`);
+          }
           companyId = newCompany?.id;
         }
         
-        if (!companyId) {
-          throw new Error('No se pudo obtener/crear empresa');
-        }
-        
-        // Obtener email del auth
-        const { data: { user: authUser } } = await supabase.auth.getUser();
-        
-        // Crear perfil
-        const { data: newProfile, error: createError } = await supabase
-          .from('users')
-          .insert({
-            id: userId,
-            email: authUser?.email || 'usuario@logan.mx',
-            full_name: authUser?.user_metadata?.full_name || 'Usuario',
-            role: 'admin',
-            company_id: companyId
-          })
-          .select()
-          .single();
-        
-        if (createError) {
-          addLog(`Error creando perfil: ${createError.message}`);
-          // Intentar una vez más buscando por si ya existe
-          const { data: retryProfile } = await supabase
+        if (companyId) {
+          // Crear perfil
+          const { data: newProfile, error: createError } = await supabase
             .from('users')
-            .select('*')
-            .eq('id', userId)
+            .insert({
+              id: userId,
+              email: authUser.email || 'usuario@logan.mx',
+              full_name: authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'Usuario',
+              role: 'admin',
+              company_id: companyId
+            })
+            .select()
             .single();
-          userProfile = retryProfile;
-        } else {
-          userProfile = newProfile;
+          
+          if (createError) {
+            addLog(`Error creando perfil: ${createError.message}`);
+          } else {
+            userProfile = newProfile;
+          }
         }
       }
       
+      // 3. Crear usuario mínimo si no se pudo obtener de la BD
       if (!userProfile) {
-        throw new Error('No se pudo obtener perfil de usuario');
+        addLog('Usando datos mínimos del auth...');
+        userProfile = {
+          id: userId,
+          email: authUser.email || 'usuario@logan.mx',
+          full_name: authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'Usuario',
+          role: 'admin' as const,
+          company_id: companyId || '',
+          created_at: new Date().toISOString()
+        };
       }
       
-      addLog(`✅ Usuario: ${userProfile.full_name}`);
+      addLog(`✅ Usuario: ${userProfile.full_name || userProfile.email}`);
       setUser(userProfile as User);
       
-      // 3. Cargar empresa
-      companyId = userProfile.company_id;
-      const { data: companyData } = await supabase
-        .from('companies')
-        .select('*')
-        .eq('id', companyId)
-        .single();
-      
-      if (companyData) {
-        setCompany(companyData);
-        addLog(`✅ Empresa: ${companyData.name}`);
+      // 4. Cargar empresa si hay companyId
+      if (userProfile.company_id) {
+        const { data: companyData } = await supabase
+          .from('companies')
+          .select('*')
+          .eq('id', userProfile.company_id)
+          .maybeSingle();
+        
+        if (companyData) {
+          setCompany(companyData);
+          addLog(`✅ Empresa: ${companyData.name}`);
+        } else {
+          // Empresa por defecto
+          setCompany({ id: userProfile.company_id, name: 'Mi Empresa', rfc: '', created_at: '' });
+        }
+        
+        // 5. Cargar datos
+        addLog('Cargando facturas...');
+        await loadCompanyData(userProfile.company_id);
       }
       
-      // 4. Cargar datos
-      addLog('Cargando facturas...');
-      await loadCompanyData(companyId);
-      
-      // 5. LISTO!
+      // 6. SIEMPRE autenticar si llegamos aquí
       addLog('✅ ¡Login completado!');
       setIsAuthenticated(true);
       
     } catch (error: any) {
       addLog(`❌ ERROR: ${error.message}`);
       console.error('loadUserData error:', error);
+      
+      // Aún así intentar autenticar con datos mínimos
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (authUser) {
+        addLog('Autenticando con datos mínimos...');
+        setUser({
+          id: authUser.id,
+          email: authUser.email || '',
+          full_name: authUser.email?.split('@')[0] || 'Usuario',
+          role: 'admin',
+          company_id: '',
+          created_at: new Date().toISOString()
+        } as User);
+        setIsAuthenticated(true);
+      }
     } finally {
       setIsLoading(false);
     }
