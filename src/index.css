@@ -18,6 +18,51 @@ body {
   background: linear-gradient(135deg, #f0fdfa 0%, #f8fafc 50%, #f0fdf4 100%);
 }
 
+/* ============================================
+   MODAL OVERLAY - FIX SCROLL ISSUE
+   ============================================ */
+
+/* Base modal overlay - FIXED position with overflow-y-auto */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Modal container - centered with margin auto */
+.modal-container {
+  position: relative;
+  margin: auto;
+  max-height: calc(100vh - 2rem);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Ensure body doesn't scroll when modal is open */
+body.modal-open {
+  overflow: hidden;
+  padding-right: 15px; /* Compensate for scrollbar */
+}
+
+/* Fix para que los modales fixed no bloqueen el scroll */
+.fixed.inset-0 {
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+}
+
+/* Asegurar que el contenido del modal no desborde */
+.fixed.inset-0 > div {
+  margin: auto;
+}
+
 /* Custom scrollbar - Light theme */
 ::-webkit-scrollbar {
   width: 8px;
@@ -147,6 +192,21 @@ textarea:focus {
     text-wrap: balance;
   }
   
+  /* Scrollbar visible pero delgado */
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
   .no-scrollbar::-webkit-scrollbar {
     display: none;
   }
@@ -184,3 +244,33 @@ textarea:focus {
     display: none !important;
   }
 }
+
+/* ============================================
+   FIX: Horizontal scroll en tablas
+   ============================================ */
+.table-container {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+}
+
+/* Scrollbar horizontal más visible */
+.table-container::-webkit-scrollbar {
+  height: 10px;
+}
+
+.table-container::-webkit-scrollbar-track {
+  background: #e2e8f0;
+  border-radius: 5px;
+}
+
+.table-container::-webkit-scrollbar-thumb {
+  background: linear-gradient(90deg, #14b8a6, #10b981);
+  border-radius: 5px;
+}
+
+/* ============================================
+   FIX: Alertas/Dialogs del navegador
+   ============================================ */
+/* No hay fix CSS para alerts nativos del navegador,
+   pero podemos asegurar que los modales custom funcionen */
